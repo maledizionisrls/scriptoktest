@@ -1,0 +1,8 @@
+selenium
+playwright
+requests
+asyncio
+pyktok
+browser-cookie3
+beautifulsoup4
+lz4
