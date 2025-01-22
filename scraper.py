@@ -147,3 +147,105 @@ class TikTokScraper:
             return "{:,}".format(int(num)).replace(",", ".")
         except:
             return str(num)
+
+def save_video_data(videos_data, output_filename):
+    """Salva i dati dei video in un file JSON"""
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        json.dump(videos_data, f, ensure_ascii=False, indent=4)
+
+async def run():
+    try:
+        # Inizializza lo scraper
+        scraper = TikTokScraper()
+        
+        # Ottiene i parametri di autenticazione
+        auth_params = await scraper.extract_auth_params()
+        if not auth_params:
+            print("Errore nell'estrazione dei parametri di autenticazione")
+            return
+        
+        # Prepara i parametri per le richieste
+        params = {
+            "period": CONFIG['TIME_PERIOD'],
+            "limit": str(CONFIG['PAGE_SIZE']),
+            "order_by": "vv",
+            "country_code": CONFIG['COUNTRY_CODE']
+        }
+        
+        headers = {
+            "timestamp": auth_params['timestamp'],
+            "user-sign": auth_params['user-sign'],
+            "anonymous-user-id": auth_params['web-id'],
+            "Accept": "application/json",
+            "User-Agent": BROWSER_CONFIG['user_agent'],
+            "Referer": API_CONFIG['base_referer']
+        }
+
+        # Recupera tutti i video
+        all_videos = []
+        for page in range(1, CONFIG['PAGES_TO_ANALYZE'] + 1):
+            videos = scraper.fetch_tiktok_page(page, params, headers)
+            if videos:
+                all_videos.extend(videos)
+                print(f"Pagina {page}/{CONFIG['PAGES_TO_ANALYZE']} completata")
+            time.sleep(CONFIG['DELAY'])
+
+        total_videos = len(all_videos)
+        print(f"\nTotale video trovati: {total_videos}")
+        
+        if all_videos:
+            print("\nOrdinamento di tutti i video per timestamp...")
+            all_videos_sorted = sorted(all_videos, key=lambda x: int(x['item_id']), reverse=True)
+            
+            # Verifica che il numero richiesto non sia maggiore del totale disponibile
+            output_videos = min(CONFIG['OUTPUT_VIDEOS'], total_videos)
+            top_videos = all_videos_sorted[:output_videos]
+            
+            print(f"\nInizio analisi dettagliata dei {output_videos} video più recenti tra i {total_videos} video trovati...\n")
+            
+            videos_data = []
+            for idx, video in enumerate(top_videos, 1):
+                url = video['item_url']
+                print(f"\nAnalisi video {idx}/{output_videos}: {url}")
+                
+                video_data = scraper.extract_video_data(url)
+                if video_data:
+                    videos_data.append(video_data)
+                    print(f"Video {idx} analizzato con successo")
+                else:
+                    print(f"Non è stato possibile analizzare questo video")
+                
+                time.sleep(CONFIG['DELAY'])
+
+            # Salva i dati dei video in un file JSON
+            video_data_file = 'video_data.json'
+            save_video_data(videos_data, video_data_file)
+
+            # Assicurati che la directory esista
+            output_dir = os.path.dirname(CONFIG['LOCAL_FILENAME'])
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+
+            # Genera il file HTML con il nome specificato in LOCAL_FILENAME
+            HTMLGenerator.generate_html_file(videos_data, CONFIG['LOCAL_FILENAME'])
+            
+            if os.path.exists(CONFIG['LOCAL_FILENAME']):
+                print(f"\nFile HTML generato con successo: {CONFIG['LOCAL_FILENAME']}")
+                print(f"Dimensione file: {os.path.getsize(CONFIG['LOCAL_FILENAME'])} bytes")
+            else:
+                print(f"\nERRORE: Il file {CONFIG['LOCAL_FILENAME']} non è stato creato!")
+
+            # Upload FTP
+            upload_to_ftp(CONFIG['LOCAL_FILENAME'])
+            
+            print(f"Analizzate {CONFIG['PAGES_TO_ANALYZE']} pagine, trovati {total_videos} video totali, generato output con i {output_videos} più recenti.")
+
+    except Exception as e:
+        print(f"Errore durante l'esecuzione: {e}")
+        import traceback
+        print("\nStack trace completo:")
+        print(traceback.format_exc())
+        raise
+
+if __name__ == "__main__":
+    asyncio.run(run())
